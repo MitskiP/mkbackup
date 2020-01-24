@@ -1,0 +1,57 @@
+#!/bin/bash
+
+src="/daten/"
+
+##############################
+. "`standardcfg -p`"
+
+info() {
+	fgcolor blue "$1\n" stop 1>&2
+	return 0
+}
+
+prefix="snapshot_"
+[ -d "$prefix" ] && info "$0 already running!" && exit 1
+log="last.log" # contains last cancelled snapshot dir
+infofile="sizechange.log" # tracks disk usage change for snapshot
+oldusage="`df -k . | tail -1 | awk '{print $3}'`"
+time="`date "+%F_%T"`"
+dst="${prefix}${time}"
+# continue last snapshot dir if aborted last time
+[ -f "$log" ] && mv "`head -1 "$log"`" "$dst" && oldusage="`tail -1 "$log"`" && info "continue last"
+
+# create empty dir to have at least one dir for last AND for checking if currently running
+mkdir "$prefix"
+# use last (dst-1) snapshot as link dir
+last="`ls -1d "$prefix"* 2>/dev/null | grep -v "$dst" | tail -1`"
+
+dst="`realpath "$dst"`"
+last="`realpath "$last"`"
+
+clean() {
+	info cleaning...
+	# delete empty running dir
+	rmdir "$prefix"
+	exit
+}
+term() {
+	info "continuing next time!"
+	clean
+}
+trap term SIGINT SIGTERM
+
+mkdir "$dst" 2>/dev/null
+
+# journal current snapshot
+echo "$dst" > "$log"
+echo "$oldusage" >> "$log"
+
+info "INFO: Running rsync $src --> $dst ..."
+#echo rsync --info=progress2 -aAXP --delete --human-readable --link-dest="$last" "$src" "$dst"
+sudo rsync --info=progress2 -avAXP --delete --human-readable --link-dest="$last" "$src" "$dst"
+
+rm "$log"
+newusage="`df -k . | tail -1 | awk '{print $3}'`"
+echo "$dst $((newusage-oldusage))" >> "$infofile"
+
+clean
